@@ -122,19 +122,27 @@ class PackingSlipSchema(BaseModel):
 class OfferLineItem(BaseModel):
     description: str = Field(
         description=(
-            "Item label or name (e.g., VIP, Hero, Kingfisher, Towel 'King Fisher'). "
-            "CRITICAL: If the column item contains quotation marks used as ditto marks ('\"' or '“' or ',,'), "
-            "you must copy and inherit the complete descriptive text from the line directly above it."
+            "From column 1 ('Quality / Sort No.'). "
+            "CRITICAL: If it contains ditto marks ('\"' or '“' or ',,'), you must inherit the main name from the line directly above. "
+            "Examples: Line 2 should be 'Blue Star (c)', Line 3 should be 'Blue Star (w) print', Line 4 should be 'Blue Star (c) print'."
         )
     )
-    dimension: Optional[str] = Field(default=None, description="Dimension size if present (e.g., 30x60, 36x72)")
-    
+    dimension: Optional[str] = Field(
+        default=None, 
+        description=(
+            "From column 2 ('Width Size'). In this document, it is written as '3060' (meaning 30x60). "
+            "Resolve any ditto marks ('\"') to match the value above ('3060')."
+        )
+    )
     quantity_bales: Optional[str] = Field(
         default=None, 
-        description="Volume or quantity with its unit (e.g., '2 Bales', '10 doz'). MUST NOT be empty for a valid item."
+        description=(
+            "From column 3 ('Qnty Pcs.Mtr'). Read the handwritten text carefully (e.g., '10 dz' or '10 doz' meaning dozen, NOT '10 d2'). "
+            "Capture exactly what is written in column 3 here."
+        )
     )
-    rate_rs: Optional[float] = Field(default=None, description="Rupees column rate element or structural price float value")
-    rate_p: Optional[float] = Field(default=0.0, description="Paise column fraction element if separated")
+    rate_rs: Optional[float] = Field(default=None, description="From column 4 ('Rate'). Leave null if blank.")
+    rate_p: Optional[float] = Field(default=0.0, description="From column 4 fraction. Leave 0.0 if blank.")
 
     @model_validator(mode="after")
     def check_must_have_metrics(self) -> "OfferLineItem":
