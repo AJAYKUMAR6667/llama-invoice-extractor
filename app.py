@@ -1,24 +1,18 @@
 import os
-import asyncio
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+from typing import List, Optional
 from llama_cloud import LlamaCloud
 
-app = FastAPI(title="Textile & Material Inward & Transport Extraction Service")
+app = FastAPI(title="Textile & Material Inward & Transport Extraction Service (Webhook-Driven)")
 
-# Initialize client — reads key from environment or fallback
-# Make sure to set this in your environment: export LLAMA_CLOUD_API_KEY="your-key"
+# Initialize client
 LLAMA_CLOUD_API_KEY = os.getenv(
     "LLAMA_CLOUD_API_KEY", 
     "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
 )
 client = LlamaCloud(api_key=LLAMA_CLOUD_API_KEY)
-
-# Polling configuration constants
-MAX_POLL_SECONDS = 300
-POLL_INTERVAL_SECONDS = 2.0
 
 # ==============================================================================
 # SECTION 1: DATA SCHEMAS
@@ -164,18 +158,19 @@ def _resolve_media_type(filename: str) -> str:
     )
 
 # ==============================================================================
-# SECTION 3: ENDPOINTS (OPTIMIZED ASYNC PATTERN)
+# SECTION 3: ENDPOINTS
 # ==============================================================================
 
 @app.post("/extract")
 async def start_extraction(
     file: UploadFile = File(...),
     doc_type: str = Query(..., description="Schema selection: tax_invoice, packing_slip, offer_form, transport_slip"),
-    tier: str = Query(default="agentic", description="LlamaCloud engine tier: 'agentic' (slower, handles handwriting) or 'standard' (faster, typed text only)")
+    tier: str = Query(default="agentic", description="LlamaCloud engine tier: 'agentic' or 'standard'"),
+    webhook_url: str = Query(..., description="The callback URL on your server LlamaCloud will hit when parsing finishes")
 ):
     """
-    Kicks off extraction and returns immediately with a job_id.
-    Prevents HTTP timeout issues completely.
+    Submits file to LlamaCloud. Directs LlamaCloud to forward results to your webhook endpoint 
+    automatically upon extraction completion. Returns immediately.
     """
     schema_cls = SCHEMA_MAP.get(doc_type)
     if schema_cls is None:
@@ -189,40 +184,45 @@ async def start_extraction(
     try:
         file_bytes = await file.read()
 
-        # Create file upstream using Threadpool to avoid blocking main thread loop
         uploaded_file = await run_in_threadpool(
             client.files.create,
             file=(file.filename, file_bytes, media_type),
             purpose="extract",
         )
 
-        # Triggers LlamaCloud parser job asynchronously
+        # We pass the webhook_url parameter into the configuration structure
         job = await run_in_threadpool(
             client.extract.create,
             file_input=uploaded_file.id,
             configuration={
                 "data_schema": schema_cls.model_json_schema(),
-                "tier": tier,  
+                "tier": tier,
+                "webhook_url": webhook_url
             },
         )
 
-        return {"job_id": job.id, "status": job.status}
+        return {"job_id": job.id, "status": job.status, "message": "Extraction initiated. Callback will handle output."}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/extract/status/{job_id}")
-async def get_extraction_status(job_id: str):
+@app.post("/webhook/receive")
+async def receive_llama_cloud_callback(request: Request):
     """
-    Poll this endpoint from the frontend (e.g. every 2 seconds) until status is COMPLETED.
+    This is where LlamaCloud sends the data directly, bypassing any need for polling loops.
     """
-    try:
-        job = await run_in_threadpool(client.extract.get, job_id)
-        if job.status == "COMPLETED":
-            return {"status": job.status, "result": job.extract_result}
-        elif job.status in ("FAILED", "CANCELLED"):
-            return {"status": job.status, "detail": "LlamaCloud processing failed or was cancelled."}
-        return {"status": job.status}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    payload = await request.json()
+    
+    # Extract the job validation parameters
+    job_status = payload.get("status")
+    job_id = payload.get("id")
+    extract_result = payload.get("extract_result")
+    
+    if job_status == "COMPLETED":
+        # -> EXECUTE YOUR NEXT FLOW PROCESS STAGE HERE DIRECTLY <-
+        # E.g., Save into database, notify your frontend state management, triggers internal ERP etc.
+        print(f"🎉 Job {job_id} succeeded! Received payload data structure.")
+        return {"status": "success", "processed": True}
+        
+    return {"status": "received", "processed": False}
