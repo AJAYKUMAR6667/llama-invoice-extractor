@@ -1,20 +1,30 @@
-import time
+import os
+import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from llama_cloud import LlamaCloud
 
 app = FastAPI(title="Textile & Material Inward & Transport Extraction Service")
 
-# Initialize client
-client = LlamaCloud(api_key="llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX")
+# Initialize client — reads key from environment or fallback
+# Make sure to set this in your environment: export LLAMA_CLOUD_API_KEY="your-key"
+LLAMA_CLOUD_API_KEY = os.getenv(
+    "LLAMA_CLOUD_API_KEY", 
+    "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
+)
+client = LlamaCloud(api_key=LLAMA_CLOUD_API_KEY)
+
+# Polling configuration constants
+MAX_POLL_SECONDS = 300
+POLL_INTERVAL_SECONDS = 2.0
 
 # ==============================================================================
-# SECTION 1: NEW DATA SCHEMAS (Transport Slips / Lorry Receipts)
+# SECTION 1: DATA SCHEMAS
 # ==============================================================================
 
 class FreightChargesSchema(BaseModel):
-    # Defining explicit fields matches both Batcotrans and Nagpur Golden layouts
     freight: Optional[float] = Field(default=0.0, description="Freight charge value")
     bc: Optional[float] = Field(default=0.0, description="BC / Booking charge value")
     handling: Optional[float] = Field(default=0.0, description="Handling or loading charge value")
@@ -34,7 +44,7 @@ class TransportLineItem(BaseModel):
     charged_weight: Optional[float] = Field(default=None, description="Charged weight in KG")
 
 class TransportSlipSchema(BaseModel):
-    """Transport Slip / Lorry Receipt Schema matching Batcotrans and Nagpur Golden Transport."""
+    """Transport Slip / Lorry Receipt Schema."""
     document_title: str = Field(description="The explicit header title of the logistics provider")
     challan_no: str = Field(description="Challan No, G.R. No, or Booking reference ID")
     invoice_no: Optional[str] = Field(default=None, description="Internal reference Invoice Number linked to the slip")
@@ -50,22 +60,14 @@ class TransportSlipSchema(BaseModel):
     line_items: List[TransportLineItem]
     total_packages_count: Optional[str] = Field(default=None, description="Summary packages line label string")
     net_weight: Optional[float] = Field(default=None, description="Aggregated structural net weight value")
-    
-    # FIX: Replaced Dict[str, float] with explicit sub-schema model validation
-    freight_charges: Optional[FreightChargesSchema] = Field(default=None, description="Broken-down logistical charges mapped out perfectly")
-    
+    freight_charges: Optional[FreightChargesSchema] = Field(default=None, description="Broken-down logistical charges")
     total_amount: float = Field(description="Final summary evaluation balance payable")
-    handwritten_notes: Optional[List[str]] = Field(default=None, description="Any unmapped structural text or notes captured anywhere on the slip")
+    handwritten_notes: Optional[List[str]] = Field(default=None, description="Any unmapped structural text or notes captured")
 
     class Config:
         populate_by_name = True
 
 
-# ==============================================================================
-# SECTION 2: PREVIOUS DATA SCHEMAS (Tax Invoices, Packing Slips, Offer Forms)
-# ==============================================================================
-
-# --- FORMAT A: Raw Material / Product Inward (Tax Invoices) ---
 class InvoiceLineItem(BaseModel):
     sl_no: Optional[int] = Field(default=None, description="Serial number of the item")
     dc_no: Optional[str] = Field(default=None, description="Challan or DC number if present in table")
@@ -96,7 +98,7 @@ class TaxInvoiceSchema(BaseModel):
     grand_total: float = Field(description="The absolute Grand Total due")
     bank_details: Optional[str] = Field(default=None, description="Bank accounts or branch info")
 
-# --- FORMAT B: Standard Delivery Slip (Packing Slips) ---
+
 class PackingLineItem(BaseModel):
     sl_no: Optional[int] = None
     description: str = Field(description="Description of the packed item")
@@ -117,90 +119,110 @@ class PackingSlipSchema(BaseModel):
     total_packages_count: Optional[str] = Field(default=None, description="Aggregated total at the bottom")
     grand_total: Optional[float] = Field(default=None, description="Final evaluation balance value")
 
-# --- FORMAT C: Product Request Form (Offer Sheets) ---
+
 class OfferLineItem(BaseModel):
-    description: str = Field(description="Item label (e.g., VIP, Hero)")
-    dimension: Optional[str] = Field(default=None, description="Dimension size (e.g., 30x60)")
-    quantity_bales: str = Field(description="Handwritten volume block")
-    rate_rs: Optional[float] = Field(default=None, description="Rupees column rate element")
-    rate_p: Optional[float] = Field(default=None, description="Paise column fraction element")
+    description: str = Field(description="Item label or name (e.g., VIP, Hero, Kingfisher, Towel 'King Fisher')")
+    dimension: Optional[str] = Field(default=None, description="Dimension size if present (e.g., 30x60, 36x72)")
+    quantity_bales: str = Field(description="Volume/quantity with unit (e.g., '2 Bales', '10 doz', '5 Dozen')")
+    rate_rs: Optional[float] = Field(default=None, description="Rupees column rate element or structural price value")
+    rate_p: Optional[float] = Field(default=0.0, description="Paise column fraction element if separated")
 
 class OfferFormSchema(BaseModel):
-    """Product Request Form (Indent Sheet)."""
-    agency_or_broker: str = Field(description="Commission agent name")
-    indent_number: str = Field(description="Indent No. or tracking ID")
-    date: str = Field(description="Written document date")
-    from_party: str = Field(description="Sender entity name")
-    to_party: str = Field(description="Target recipient name")
-    dispatch_instructions: Optional[str] = Field(default=None, description="Shipping route directions")
+    """Product Request Form (Indent Sheet / Order Form)."""
+    agency_or_broker: str = Field(description="Commission agent or issuing organization (e.g., SHUKLA AGENCIES)")
+    indent_number: str = Field(description="Indent No., Order No., or Tracking Reference ID")
+    date: str = Field(description="Written document execution date")
+    from_party: str = Field(description="Sender / Customer Details / Purchaser")
+    to_party: str = Field(description="Target recipient / Order M/s / Supplier")
+    dispatch_instructions: Optional[str] = Field(default=None, description="Shipping route or transport guidelines")
     line_items: List[OfferLineItem]
-    handwritten_notes: Optional[List[str]] = Field(default=None, description="Any loose handwritten text")
+    handwritten_notes: Optional[List[str]] = Field(default=None, description="Any loose handwritten remarks, discount clauses, or terms")
 
-# -------------------------------------------------------------
-# 3. RUNTIME EXTRACTION ROUTING (Supports All Formats)
-# -------------------------------------------------------------
+
+SCHEMA_MAP = {
+    "tax_invoice": TaxInvoiceSchema,
+    "packing_slip": PackingSlipSchema,
+    "offer_form": OfferFormSchema,
+    "transport_slip": TransportSlipSchema,
+}
+
+# ==============================================================================
+# SECTION 2: UTILITIES & ROUTING
+# ==============================================================================
+
+def _resolve_media_type(filename: str) -> str:
+    filename_lower = filename.lower()
+    if filename_lower.endswith(".pdf"):
+        return "application/pdf"
+    elif filename_lower.endswith(".png"):
+        return "image/png"
+    elif filename_lower.endswith((".jpg", ".jpeg")):
+        return "image/jpeg"
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported format type. Send PDF, PNG, or JPEG image assets.",
+    )
+
+# ==============================================================================
+# SECTION 3: ENDPOINTS (OPTIMIZED ASYNC PATTERN)
+# ==============================================================================
 
 @app.post("/extract")
-async def extract_document(
+async def start_extraction(
     file: UploadFile = File(...),
-    doc_type: str = Query(..., description="Schema selection: tax_invoice, packing_slip, offer_form, transport_slip")
+    doc_type: str = Query(..., description="Schema selection: tax_invoice, packing_slip, offer_form, transport_slip"),
+    tier: str = Query(default="agentic", description="LlamaCloud engine tier: 'agentic' (slower, handles handwriting) or 'standard' (faster, typed text only)")
 ):
-    # Route matching for both Previous and New Schemas
-    if doc_type == "tax_invoice":
-        selected_schema = TaxInvoiceSchema.model_json_schema()
-    elif doc_type == "packing_slip":
-        selected_schema = PackingSlipSchema.model_json_schema()
-    elif doc_type == "offer_form":
-        selected_schema = OfferFormSchema.model_json_schema()
-    elif doc_type == "transport_slip":
-        selected_schema = TransportSlipSchema.model_json_schema()
-    else:
+    """
+    Kicks off extraction and returns immediately with a job_id.
+    Prevents HTTP timeout issues completely.
+    """
+    schema_cls = SCHEMA_MAP.get(doc_type)
+    if schema_cls is None:
         raise HTTPException(
-            status_code=400, 
-            detail="Invalid doc_type routing identifier. Choose: tax_invoice, packing_slip, offer_form, transport_slip."
+            status_code=400,
+            detail=f"Invalid doc_type routing identifier. Choose from: {list(SCHEMA_MAP.keys())}",
         )
 
-    # Determine Media Type
-    filename_lower = file.filename.lower()
-    if filename_lower.endswith('.pdf'):
-        media_type = "application/pdf"
-    elif filename_lower.endswith('.png'):
-        media_type = "image/png"
-    elif filename_lower.endswith(('.jpg', '.jpeg')):
-        media_type = "image/jpeg"
-    else:
-        raise HTTPException(
-            status_code=400, 
-            detail="Unsupported format type. Send PDF, PNG, or JPEG image assets."
-        )
-    
+    media_type = _resolve_media_type(file.filename)
+
     try:
         file_bytes = await file.read()
-        
-        # Create extraction upload file reference
-        uploaded_file = client.files.create(
-            file=(file.filename, file_bytes, media_type), 
-            purpose="extract"
+
+        # Create file upstream using Threadpool to avoid blocking main thread loop
+        uploaded_file = await run_in_threadpool(
+            client.files.create,
+            file=(file.filename, file_bytes, media_type),
+            purpose="extract",
         )
 
-        # Trigger extracting utilizing targeted schema profile
-        job = client.extract.create(
+        # Triggers LlamaCloud parser job asynchronously
+        job = await run_in_threadpool(
+            client.extract.create,
             file_input=uploaded_file.id,
             configuration={
-                "data_schema": selected_schema,
-                "tier": "agentic",  # Essential for processing mixed digital and handwritten details!
+                "data_schema": schema_cls.model_json_schema(),
+                "tier": tier,  
             },
         )
 
-        # Await extraction lifecycle status updates
-        while job.status not in ("COMPLETED", "FAILED", "CANCELLED"):
-            time.sleep(1.5)
-            job = client.extract.get(job.id)
+        return {"job_id": job.id, "status": job.status}
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/extract/status/{job_id}")
+async def get_extraction_status(job_id: str):
+    """
+    Poll this endpoint from the frontend (e.g. every 2 seconds) until status is COMPLETED.
+    """
+    try:
+        job = await run_in_threadpool(client.extract.get, job_id)
         if job.status == "COMPLETED":
-            return job.extract_result
-        else:
-            raise HTTPException(status_code=500, detail=f"LlamaCloud task failed with status code: {job.status}")
-
+            return {"status": job.status, "result": job.extract_result}
+        elif job.status in ("FAILED", "CANCELLED"):
+            return {"status": job.status, "detail": "LlamaCloud processing failed or was cancelled."}
+        return {"status": job.status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
