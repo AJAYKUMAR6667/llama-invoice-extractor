@@ -125,8 +125,8 @@ class OfferLineItem(BaseModel):
             "The clean product name text extracted from the main item column "
             "(e.g., 'Particulars', 'Description of Goods', 'Quality / Sort No.'). "
             "1. STRIP DIMENSIONS: Remove any size configurations found embedded or written inline "
-            "with the name (e.g., convert '30/60- Diamond' to 'Diamond', 'Kingfisher 30x60' to 'Kingfisher', "
-            "and '76x82 Silk vanaja' to 'Silk vanaja'). "
+            "with the name (e.g., convert '30/60- Diamond' to 'Diamond', 'Kingfisher 30X60' to 'Kingfisher', "
+            "and '76X82 Silk vanaja' to 'Silk vanaja'). "
             "2. KEEP QUALITY MODIFIERS: Retain descriptive specifications, style codes, colors, or quality "
             "brackets that belong to the product identity (e.g., 'Blue Star (w)', 'Blue Star (c)', "
             "'VIP (600g)', 'Hero 700g', 'Plain white 3', 'Diamond col'). "
@@ -141,9 +141,9 @@ class OfferLineItem(BaseModel):
             "The product size configuration from the 'Width Size' or 'Dimension' column. "
             "1. STANDARDIZE VALUE FORMAT: Normalize all layout variations—whether written as a raw number sequence "
             "('3060'), separated by dots ('30..60', '30.60'), slashes ('30/60'), or dashes ('36-72')—to "
-            "always be formatted strictly as 'WIDTHxLENGTH' (e.g., '30x60', '36x72', '76x82'). Do not truncate zeros (e.g., '3060' is '30x60', not '30x6'). "
+            "always be formatted strictly as 'WIDTHxLENGTH' (e.g., '30X60', '36X72', '76X82'). Do not truncate zeros (e.g., '3060' is '30X60', not '30X6'). "
             "2. CASCADE/RESOLVE DITTO MARKS: If subsequent rows contain ditto marks (,,), quotes (\"), lines, or are blank, "
-            "you MUST explicitly copy and populate the active dimension string (e.g., '30x60') into every single line item entry. "
+            "you MUST explicitly copy and populate the active dimension string (e.g., '30X60') into every single line item entry. "
             "Never omit this field or return null."
         )
     )
