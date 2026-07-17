@@ -2,18 +2,18 @@ import os
 import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional
 from llama_cloud import LlamaCloud
 
 app = FastAPI(title="Textile & Material Inward & Transport Extraction Service")
 
 # Initialize client
-# LLAMA_CLOUD_API_KEY = os.getenv(
-#     "LLAMA_CLOUD_API_KEY", 
-#     "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
-# )
-client = LlamaCloud(api_key="llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX")
+LLAMA_CLOUD_API_KEY = os.getenv(
+    "LLAMA_CLOUD_API_KEY", 
+    "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
+)
+client = LlamaCloud(api_key=LLAMA_CLOUD_API_KEY)
 
 # Polling configuration constants
 MAX_POLL_SECONDS = 300
@@ -120,11 +120,28 @@ class PackingSlipSchema(BaseModel):
 
 
 class OfferLineItem(BaseModel):
-    description: str = Field(description="Item label or name (e.g., VIP, Hero, Kingfisher, Towel 'King Fisher')")
+    description: str = Field(
+        description=(
+            "Item label or name (e.g., VIP, Hero, Kingfisher, Towel 'King Fisher'). "
+            "CRITICAL: If the column item contains quotation marks used as ditto marks ('\"' or '“' or ',,'), "
+            "you must copy and inherit the complete descriptive text from the line directly above it."
+        )
+    )
     dimension: Optional[str] = Field(default=None, description="Dimension size if present (e.g., 30x60, 36x72)")
-    quantity_bales: str = Field(description="Volume or quantity with its unit (e.g., '2 Bales', '10 doz', '5 Dozen')")
+    
+    quantity_bales: Optional[str] = Field(
+        default=None, 
+        description="Volume or quantity with its unit (e.g., '2 Bales', '10 doz'). MUST NOT be empty for a valid item."
+    )
     rate_rs: Optional[float] = Field(default=None, description="Rupees column rate element or structural price float value")
     rate_p: Optional[float] = Field(default=0.0, description="Paise column fraction element if separated")
+
+    @model_validator(mode="after")
+    def check_must_have_metrics(self) -> "OfferLineItem":
+        """ Ensures that rows acting purely as section text/notes are not grabbed as items. """
+        if not self.quantity_bales and self.rate_rs is None:
+            raise ValueError("Row only contains description metadata; ignoring as an active line item.")
+        return self
 
 class OfferFormSchema(BaseModel):
     """Product Request Form (Indent Sheet / Order Form)."""
