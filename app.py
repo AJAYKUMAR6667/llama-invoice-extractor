@@ -119,25 +119,27 @@ class PackingSlipSchema(BaseModel):
     grand_total: Optional[float] = Field(default=None, description="Final evaluation balance value")
 
 
+from typing import List, Optional
+from pydantic import BaseModel, Field, model_validator
+
 class OfferLineItem(BaseModel):
     description: str = Field(
         description=(
             "From the main item column (e.g., 'Particulars', 'Description of Goods', 'Quality / Sort No.'). "
-            "CRITICAL: Resolve ditto marks ('\"', '“', ',,') by inheriting the main parent name "
-            "from the line above while preserving row-specific modifiers. "
-            "Strip out the dimension if it is written inline as part of the description string "
-            "(e.g., convert 'Kingfisher 30x60' to just 'Kingfisher' or '30/60 Diamond' to 'Diamond')."
+            "CRITICAL: Keep this strictly as the clean product text name only (e.g., 'Blue Star (w)', 'Kingfisher'). "
+            "Strip out the dimension completely if it is written inline alongside the name in the document "
+            "(e.g., convert 'Kingfisher 30x60' to just 'Kingfisher' or '30/60 Diamond' to 'Diamond'). "
+            "Resolve any ditto marks ('\"', '“', ',,') by inheriting the product parent name from the line above."
         )
     )
     dimension: Optional[str] = Field(
         default=None, 
         description=(
-            "The product size configuration. CRITICAL: Standardize any variation of dimensions "
+            "The isolated product size configuration. CRITICAL: Standardize any variation of dimensions "
             "found in the document—whether written as '3060', '30..60', '30.60', '30/60', or '30x60'—to "
             "always be formatted exactly as '30x60' (or its respective mapped size like '36x72'). "
-            "If the dimension is written inline inside the description column next to the product name "
-            "instead of a dedicated size column, extract it here, resolve any subsequent ditto marks, "
-            "and format it cleanly with an 'x'."
+            "Extract this cleanly as its own independent value; never leave it combined inside the description field. "
+            "Resolve any subsequent ditto marks to match the active size from the row above."
         )
     )
     quantity_bales: Optional[str] = Field(
