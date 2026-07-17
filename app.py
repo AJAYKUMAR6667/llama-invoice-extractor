@@ -119,7 +119,6 @@ class PackingSlipSchema(BaseModel):
     grand_total: Optional[float] = Field(default=None, description="Final evaluation balance value")
 
 
-
 class OfferLineItem(BaseModel):
     description: str = Field(
         description=(
@@ -128,68 +127,99 @@ class OfferLineItem(BaseModel):
             "1. STRIP DIMENSIONS: Remove any size configurations found embedded or written inline "
             "with the name (e.g., convert '30/60- Diamond' to 'Diamond', 'Kingfisher 30x60' to 'Kingfisher', "
             "and '76x82 Silk vanaja' to 'Silk vanaja'). "
-            "2. KEEP QUALITY MODIFIERS: Retain descriptive specifications or style numbers that belong to "
-            "the product identity (e.g., 'VIP (600g)', 'Hero 700g', 'Plain white 3', 'Diamond col'). "
-            "3. RESOLVE DITTO MARKS: If ditto marks ('\"', '“', ',,', '—') are present, inherit the product name "
-            "from the row directly above, combining it with any new explicit suffix text written on the line."
-        )
-    )
-    description: str = Field(
-        description=(
-            "From the main item column (e.g., 'Particulars', 'Description of Goods', 'Quality / Sort No.'). "
-            "CRITICAL: Keep this strictly as the clean product text name, including all immediate style, color, "
-            "or quality brackets/modifiers written next to it on the same line (e.g., 'Blue Star (w)', 'Blue Star (c)'). "
-            "DO NOT strip out quality suffixes like '(w)', '(c)', or '(w) print'. Only strip out pure numerical size configurations "
-            "if they are written inline (like '30x60'). "
-            "RESOLVE DITTO MARKS: If a row contains ditto marks ('\"', '“', ',,'), inherit the base product parent "
+            "2. KEEP QUALITY MODIFIERS: Retain descriptive specifications, style codes, colors, or quality "
+            "brackets that belong to the product identity (e.g., 'Blue Star (w)', 'Blue Star (c)', "
+            "'VIP (600g)', 'Hero 700g', 'Plain white 3', 'Diamond col'). "
+            "3. RESOLVE DITTO MARKS: If a row contains ditto marks ('\"', '“', ',,', '—'), inherit the base product parent "
             "name from the row immediately above, combining it cleanly with any explicit suffix modifiers written on the current line."
         )
     )
-    quantity_bales: Optional[str] = Field(
-        default="", 
+
+    dimension: str = Field(
+        default="",
         description=(
-            "Extracted from dedicated macro packaging columns (like 'Bales') or structural handwritten "
-            "annotations specifying whole packaging units (e.g., '1 Bale', '2 Bale', '1 Bale mix'). "
-            "Leave as an empty string if only localized pieces or dozens are being listed."
+            "The product size configuration from the 'Width Size' or 'Dimension' column. "
+            "1. STANDARDIZE VALUE FORMAT: Normalize all layout variations—whether written as a raw number sequence "
+            "('3060'), separated by dots ('30..60', '30.60'), slashes ('30/60'), or dashes ('36-72')—to "
+            "always be formatted strictly as 'WIDTHxLENGTH' (e.g., '30x60', '36x72', '76x82'). Do not truncate zeros (e.g., '3060' is '30x60', not '30x6'). "
+            "2. CASCADE/RESOLVE DITTO MARKS: If subsequent rows contain ditto marks (,,), quotes (\"), lines, or are blank, "
+            "you MUST explicitly copy and populate the active dimension string (e.g., '30x60') into every single line item entry. "
+            "Never omit this field or return null."
         )
     )
+
+    quantity_bales: Optional[str] = Field(
+        default="",
+        description=(
+            "Extracted from dedicated macro packaging columns (like 'Bales' or 'Delivery') or structural handwritten "
+            "annotations specifying whole packaging units (e.g., '1 Bale', '2 Bale', '1 Bale mix'). "
+            "Leave as an empty string if only localized pieces or dozens are being listed on that row."
+        )
+    )
+
     quantity_pieces_meters: Optional[str] = Field(
         default=None,
         description=(
-            "The quantity or localized unit count (e.g., from 'Qty', 'Meters/Pcs', or 'No. of Bales' columns). "
-            "STANDARDIZE HANDWRITING: Carefully map varying abbreviated notation to standard terms. "
+            "The quantity or localized unit count (e.g., from 'Qty', 'Meters/Pcs', or 'Qnty Pcs.Mtr' columns). "
+            "CRITICAL HANDWRITING CORRECTION: Carefully map varying abbreviated notation to standard terms. "
             "Convert handwritten cursive forms like 'd.', 'd2', 'doz', or 'Dozen' to dozens ('dz'), and raw numeric "
             "counts to pieces ('pcs'). Examples: '5 d.' -> '5 dz', '10 d2' -> '10 dz', '720.00' -> '720 pcs'."
         )
     )
+
     rate_rs: Optional[float] = Field(
-        default=None, 
-        description="The base rate value before the decimal/fraction point. Leave null if blank."
+        default=None,
+        description="The base rate value before the decimal/fraction point. Leave null if blank.",
     )
+
     rate_p: Optional[float] = Field(
-        default=0.0, 
-        description="The rate fraction/paisa balance (e.g., from a split column or suffix like '.50' or '=00')."
+        default=0.0,
+        description="The rate fraction/paisa balance (e.g., from a split column or suffix like '.50' or '=00').",
     )
 
     @model_validator(mode="after")
     def check_must_have_metrics(self) -> "OfferLineItem":
         """Ensures that structural divider rows or bottom totals are ignored."""
-        if not self.quantity_pieces_meters and not self.quantity_bales and self.rate_rs is None:
-            raise ValueError("Row lacks clear quantity metrics or item rates; skipping.")
+        if (
+            not self.quantity_pieces_meters
+            and not self.quantity_bales
+            and self.rate_rs is None
+        ):
+            raise ValueError(
+                "Row lacks clear quantity metrics or item rates; skipping."
+            )
         return self
+
 
 class OfferFormSchema(BaseModel):
     """Product Request Form (Indent Sheet / Order Form / Order Confirmation)."""
-    agency_or_broker: str = Field(description="Commission agent or organization profile banner (e.g., 'SHUKLA AGENCIES', 'SURYA AGENCIES')")
-    indent_number: str = Field(description="Tracking identity string (e.g., Indent No., Order No., Reference Code)")
-    date: str = Field(description="Document execution date stamp. Leave empty string if blank.")
-    from_party: str = Field(description="Buyer / Purchaser customer profile name and regional city location details")
-    to_party: str = Field(description="Seller / Supplier company profile designation")
-    dispatch_instructions: Optional[str] = Field(default=None, description="Transport guidelines, transit stations, or booking routes (e.g., 'NGT to Bhilai')")
-    line_items: List[OfferLineItem] = Field(description="List of valid structural item rows extracted from the main contents grid table.")
-    handwritten_notes: Optional[List[str]] = Field(default=None, description="Loose terms, miscellaneous structural footer text remarks, or discount terms (e.g., 'Cash discount 2%')")
 
-
+    agency_or_broker: str = Field(
+        description="Commission agent or organization profile banner (e.g., 'DILIP TEXTILE AGENCY', 'SHUKLA AGENCIES', 'SURYA AGENCIES')"
+    )
+    indent_number: str = Field(
+        description="Tracking identity string (e.g., Indent No., Order No., Reference Code)"
+    )
+    date: str = Field(
+        description="Document execution date stamp. Leave empty string if blank."
+    )
+    from_party: str = Field(
+        description="Buyer / Purchaser customer profile name and regional city location details"
+    )
+    to_party: str = Field(
+        description="Seller / Supplier company profile designation"
+    )
+    dispatch_instructions: Optional[str] = Field(
+        default=None,
+        description="Transport guidelines, transit stations, destination, or booking routes (e.g., 'NGT to Bhilai', 'Destination: mata Samastipur')",
+    )
+    line_items: List[OfferLineItem] = Field(
+        description="List of valid structural item rows extracted from the main contents grid table."
+    )
+    handwritten_notes: Optional[List[str]] = Field(
+        default=None,
+        description="Loose terms, miscellaneous structural footer text remarks, phone numbers, or discount terms (e.g., 'Cash discount 2%')",
+    )
 SCHEMA_MAP = {
     "tax_invoice": TaxInvoiceSchema,
     "packing_slip": PackingSlipSchema,
