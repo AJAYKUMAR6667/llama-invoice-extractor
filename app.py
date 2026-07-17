@@ -137,13 +137,13 @@ class OfferLineItem(BaseModel):
     dimension: Optional[str] = Field(
         default=None, 
         description=(
-            "The isolated product size configuration. Scan both the designated 'Size' column "
-            "and the description text string to isolate this value. "
-            "STANDARDIZE VALUE FORMAT: Normalize all layout variations—whether written as a raw number sequence "
-            "('3060'), separated by dots ('30..60', '30.60'), slashes ('30/60'), or dashes ('36-72')—to "
-            "always be formatted strictly as 'WIDTHxLENGTH' (e.g., '30x60', '36x72', '76x82'). "
-            "RESOLVE DITTO MARKS: Carry down and explicitly fill the resolved string value from the row above "
-            "if subsequent rows use ditto marks or lines."
+            "The isolated product size configuration from the 'Width Size' column. "
+            "CRITICAL: Look closely at the FIRST row size value (e.g., '3060'). Do not drop trailing zeros "
+            "or mistake them for a single digit (e.g., '3060' must be standardized exactly as '30X60', NOT '30x6' or '3x6'). "
+            "RESOLVE DITTO MARKS & CASCADING: If subsequent rows contain ditto marks (,,), quotes (\"), or lines, "
+            "they MUST inherit the exact identical standardized size configuration from the row above (e.g., all rows "
+            "should be '30X60' if the top row is '3060'). NEVER mix columns or grab values from the Quantity column "
+            "to populate this field."
         )
     )
     quantity_bales: Optional[str] = Field(
