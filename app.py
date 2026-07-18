@@ -1,17 +1,23 @@
 import os
-import json
-import httpx
+import asyncio
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from typing import List, Optional
 from pydantic import BaseModel, Field, model_validator, ConfigDict
+from llama_cloud import LlamaCloud
 
 app = FastAPI(title="Textile & Material Inward & Transport Extraction Service Fast")
 
-# Using raw HTTP request to LlamaCloud inline API instead of the polling SDK client
+# Initialize the official client SDK - it automatically routes to the correct domain
 LLAMA_CLOUD_API_KEY = os.getenv(
     "LLAMA_CLOUD_API_KEY", 
     "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
 )
+client = LlamaCloud(api_key=LLAMA_CLOUD_API_KEY)
+
+# Optimized polling configuration for Zoho's instant response needs
+MAX_POLL_SECONDS = 30
+POLL_INTERVAL_SECONDS = 0.5  # Check every 0.5s instead of 2.0s for speed
 
 # ==============================================================================
 # SECTION 1: DATA SCHEMAS
@@ -61,7 +67,6 @@ class TransportSlipSchema(BaseModel):
     total_amount: float = Field(description="Final summary evaluation balance payable")
     handwritten_notes: Optional[List[str]] = Field(default=None, description="Any unmapped structural text or notes captured anywhere on the slip")
 
-    # Fixed: Replaced class Config with V2 ConfigDict
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -265,7 +270,7 @@ async def extract_document(
     doc_type: str = Query(..., description="Schema selection: tax_invoice, packing_slip, offer_form, transport_slip")
 ):
     """
-    Executes instant inline extraction to bypass background processing queues.
+    Submits extraction to LlamaIndex production and runs a sub-second optimized polling engine.
     """
     schema_cls = SCHEMA_MAP.get(doc_type)
     if schema_cls is None:
@@ -277,29 +282,43 @@ async def extract_document(
     media_type = _resolve_media_type(file.filename)
     file_bytes = await file.read()
 
-    # Make a direct synchronous round-trip request to LlamaCloud's inline extraction API
-    async with httpx.AsyncClient(timeout=60.0) as http_client:
-        try:
-            headers = {"Authorization": f"Bearer {LLAMA_CLOUD_API_KEY}"}
+    try:
+        # 1. Safely upload the binary content via the native SDK
+        uploaded_file = await run_in_threadpool(
+            client.files.create,
+            file=(file.filename, file_bytes, media_type),
+            purpose="extract",
+        )
+
+        # 2. Spawn the job using the v2 agentic framework configuration options
+        job = await run_in_threadpool(
+            client.extract.create,
+            file_input=uploaded_file.id,
+            configuration={
+                "data_schema": schema_cls.model_json_schema(),
+                "tier": "agentic",
+            },
+        )
+
+        # 3. Fast high-frequency polling loop targeting the correct API infrastructure
+        elapsed = 0.0
+        while job.status not in ("COMPLETED", "FAILED", "CANCELLED"):
+            if elapsed >= MAX_POLL_SECONDS:
+                raise HTTPException(
+                    status_code=504,
+                    detail=f"Extraction job {job.id} timed out after {MAX_POLL_SECONDS}s."
+                )
             
-            # Convert the active Pydantic code model directly to a JSON Schema string payload
-            data = {"data_schema": json.dumps(schema_cls.model_json_schema())}
-            files = {"file": (file.filename, file_bytes, media_type)}
-            
-            # Calling the /inline endpoint drops response latency down to 1-3 seconds
-            response = await http_client.post(
-                "https://api.llamacloud.com/v1/extract/inline",
-                headers=headers,
-                data=data,
-                files=files
-            )
-            
-            if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=response.text)
-            
-            # Extract and return the structure payload directly back to Zoho Deluge script
-            result_json = response.json()
-            return result_json.get("extract_result", result_json)
-            
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Inline execution failed: {str(e)}")
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+            job = await run_in_threadpool(client.extract.get, job.id)
+            elapsed += POLL_INTERVAL_SECONDS
+
+        if job.status == "COMPLETED":
+            return job.extract_result
+        else:
+            raise HTTPException(status_code=500, detail=f"LlamaCloud extraction pipeline failed with status: {job.status}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction runtime exception: {str(e)}")
