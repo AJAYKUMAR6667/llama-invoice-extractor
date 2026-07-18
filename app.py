@@ -68,6 +68,21 @@ class TransportSlipSchema(BaseModel):
     handwritten_notes: Optional[List[str]] = Field(default=None, description="Any unmapped structural text or notes captured anywhere on the slip")
 
     model_config = ConfigDict(populate_by_name=True)
+    from_location: str = Field(
+        alias="from", 
+        description=(
+            "Origin city hub, branch location, or booking office. "
+            "CRITICAL: Look inside the grid block explicitly labeled 'FROM' (e.g., extract 'BKG ERODE'). "
+            "Do NOT extract static top-level banner headers like 'HYDERABAD JURISDICTION'."
+        )
+    )
+    to_location: str = Field(
+        alias="to", 
+        description=(
+            "Destination delivery point, city, or drop zone. "
+            "CRITICAL: Look strictly inside the grid cell below or adjacent to the 'TO' label (e.g., 'SANGAMNER')."
+        )
+    )
 
 
 class InvoiceLineItem(BaseModel):
