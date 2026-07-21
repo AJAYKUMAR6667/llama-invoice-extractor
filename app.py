@@ -11,7 +11,7 @@ app = FastAPI(title="Textile & Material Inward & Transport Extraction Service Fa
 # Initialize the official client SDK - it automatically routes to the correct domain
 LLAMA_CLOUD_API_KEY = os.getenv(
     "LLAMA_CLOUD_API_KEY", 
-    "llx-knaUlGzQqxYtuAe9FnOO2YrMrjP2GXvmVycN5dQOtTA49XMX"
+    "llx-HES6SqrRrlNgw3cqBxAW1rCz4HNjR16IVkPC90S377jPjX3F"
 )
 client = LlamaCloud(api_key=LLAMA_CLOUD_API_KEY)
 
